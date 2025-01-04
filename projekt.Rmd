@@ -13,7 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 Dane pochodzą ze strony <https://fred.stlouisfed.org/series/MSPUS> i dotyczą kwartalnych cen mieszkań w USA w dolarach.
 
-```{r warning=FALSE}
+```{r warning=FALSE, message=FALSE}
 library(oce)
 library(outliers)
 library(lattice)
