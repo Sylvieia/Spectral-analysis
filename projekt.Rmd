@@ -1,0 +1,288 @@
+---
+title: "Projekt - analiza cyklicznych wzorców cen mieszkań w USA"
+author: "Sylvia Romek"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Dane pochodzą ze strony <https://fred.stlouisfed.org/series/MSPUS> i dotyczą kwartalnych cen mieszkań w USA w dolarach.
+
+```{r warning=FALSE}
+library(oce)
+library(outliers)
+library(lattice)
+library(multitaper)
+require(multitaper)
+library(readxl)
+
+#Wczytanie danych i pogląd:
+rm(list=ls())
+dane <- read_excel("MSPUS.xlsx", sheet = "Quarterly")
+head(dane)
+
+#Pogląd szeregu czasowego:
+dane2 <- ts(dane$MSPUS, start =c(1963, 1), frequency = 4) 
+print(dane2)
+#Upewnienie się, że są w dobrym formacie
+str(dane2)
+```
+
+## Wykres danych
+
+```{r}
+ts.plot(dane2, type="l", ylab="Medialna cena mieszkania w USA (dolary)",xlab="Time")
+grid()
+```
+
+Widać, jak ogromnie wzrosły ceny mieszkań w USA w podanym czasie.
+Dane wykazują ogólny trend wzrostowy z pewnymi wahaniami na przestrzeni lat.
+Widać wyraźny trend wzrostowy, który po 2020 roku wydaje się stabilizować.
+
+## Dekompozycja szeregu czasowego i usuwanie trendu z danych
+
+```{r}
+dane_dekom<-decompose(dane2)
+plot(dane_dekom)
+#dane bez trendu
+dane_trend<-diff(ts(log(dane2)))
+plot(dane_trend)
+```
+
+Wnioski:
+
+-   Szereg czasowy charakteryzuje się silnym trendem i wyraźną sezonowością.
+    Widać wyraźną, regularną sezonowość, która jest spójna przez cały okres analizy.
+
+-   Po 2020 roku trend wydaje się stabilizować, co może sugerować zmiany w dynamice wzrostu.
+    Komponent losowy wskazuje na zwiększoną zmienność w pewnych okresach, co może być efektem czynników zewnętrznych.
+
+-   Wykres "dane bez trendu" reprezentuje dane szeregowe z dużym poziomem szumu i zmienności.
+    Widoczne są zarówno krótkookresowe fluktuacje, jak i pewne cykliczne zmiany w dłuższej perspektywie.
+
+## Periodogram naiwny dla danych bez trendu:
+
+```{r}
+P2<- spec.pgram(dane_trend,log='no', taper=0,pad=0, fast=FALSE,demean=FALSE,detrend=TRUE)
+```
+
+Wysoki pik występuje dla częstotliwości 0.25, co oznacza że co (1/0.25) 4 kwartały występuje cykl (roczny).
+Dla piku przy częstoliwości 0.5 podejrzewam wpływ aliasowania lub szumu w danych zatem nie uważam go za istotnego.
+
+## Wygładzanie średnią ruchomą
+
+```{r}
+plot(dane_trend,type="l")
+grid()
+#wygladzenie srednia ruchoma rzedu 2
+f2<-c(1/4,0.5,1/4)
+d2 <-filter(dane_trend,f2,sides=2)
+lines(d2, col="yellow")
+#wygladzenie srednia ruchoma rzedu 3
+f3<-c(1/3,1/3,1/3)
+d3<-filter(dane_trend,f3,sides=2)
+lines(d3, col="blue")
+#wygladzenie srednia ruchoma rzedu 4
+f4<-c(1/8,1/4,1/4,1/4,1/8)
+d4 <-filter(dane_trend,f4,sides=2)
+lines(d4, col="orange")
+#wygladzenie srednia ruchoma rzedu 5
+f5<-c(1/5,1/5,1/5,1/5,1/5)
+d5 <-filter(dane_trend,f5,sides=2)
+lines(d5, col="green")
+#wygladzanie srednia ruchoma rzedu 10
+f10<-rep(1/10,10)
+d10<-filter(dane2,f10,sides=2)
+lines(d10,col="blue")
+#wygladzanie srednia ruchoma rzedu 12
+f12<-rep(1/12,12)
+d12<-filter(dane_trend,f12,sides=2)
+lines(d12,col="red")
+#wygladzanie srednia ruchoma rzedu 20
+f20<-rep(1,20)/20
+d20 <- filter(dane_trend,f20,sides=2)
+lines(d20, col="grey")
+```
+
+Czerwona linia:
+
+Mocniejsze wygładzanie, które eliminuje większość fluktuacji.
+Ujawnia ogólny **trend** danych (malejący).
+
+Zielona/Niebieska linia:
+
+Słabsze wygładzanie, które zachowuje więcej krótkookresowych oscylacji.
+Lepiej pokazują **sezonowość** w danych.
+
+```{r}
+dane3<-d12[12:144]
+plot(dane3,type="l",col="red")
+```
+
+Wykres jest najbardziej wygladzony dla lini czerwonej, ktora odpowiada wygladzeniu srednia ruchoma rzędu 12.
+
+## **Periodogramy**
+
+**Periodogram naiwny**
+
+```{r}
+P<- spec.pgram(dane,log='no', taper=0,pad=0, fast=FALSE,demean=FALSE,detrend=TRUE)
+abline(v=1/12,lty='dotted',col="red")
+abline(v=0.1665,lty='dotted',col="grey")
+abline(v=0.25,lty='dotted',col="grey")
+```
+
+-   **Silny pik na początku osi X** (blisko częstotliwości 0) wskazuje na istnienie bardzo wolnozmiennych cykli w danych, najprawdopodobniej związanych z długoterminowym trendem.
+
+-   Moc dla innych częstotliwości (poza początkiem) jest bardzo niska lub bliska zeru, co sugeruje brak istotnych cykliczności w wyższych częstotliwościach.
+
+-   Linia przerywana (często pokazująca poziom istotności lub szumów) potwierdza, że dominacja niskiej częstotliwości jest wyraźna.
+
+**Periodogram wygladzony oknem Daniella**
+
+```{r}
+#PERIODOGRAM WYGLADZONY OKNEM DANIELLA:
+par(mfrow=c(3,2))
+window_1<-kernel('daniell',3)
+window_2<-kernel('daniell',6)
+window_3<-kernel('daniell',c(2,2))
+plot(window_1)
+P1<-spec.pgram(dane,kernel=window_1,log='no',taper=0,fast=F,detrend=T)
+abline(v=1/12,lty='dotted',col="red")
+plot(window_2)
+spec.pgram(dane,kernel=window_2,log='no',taper=0,fast=F,detrend=T)
+abline(v=1/12,lty='dotted',col="red")
+plot(window_3)
+spec.pgram(dane,kernel=window_3,log='no',taper=0,fast=F,detrend=T)
+abline(v=1/12,lty='dotted',col="red")
+```
+
+### **Pierwszy wiersz Daniell(3)**
+
+-   Wagi filtra Daniella są wąskie i skoncentrowane wokół k=0.
+    Zakres obejmuje 7 punktów (−3 do 3).
+
+-   Szerokość pasma (bandwidth) wynosi **0.00818**, co oznacza, że filtr wygładza dane na dość małą skalę.
+
+**Wykres widma:**
+
+-   Wygładzony periodogram pokazuje spadek mocy dla wyższych częstotliwości.
+
+### **Drugi wiersz Daniell(6)**
+
+-   Wagi filtra są szersze i obejmują 13 punktów (−6 do 6), co wskazuje na silniejsze wygładzenie.
+
+-   Bandwidth wynosi **0.0152**, co oznacza większy zakres uśredniania widmowego.
+
+**Wykres widma:**
+
+-   Periodogram jest wyraźnie gładszy niż w przypadku Daniell(3).
+
+### **Trzeci wiersz Daniell(2,2)**
+
+-   Wagi mają bardziej złożony kształt wynikający z zastosowania dwóch filtrów Daniell(2).
+    Zakres obejmuje 9 punktów (−4-4−4 do 444).
+
+-   Bandwidth jest zbliżone do poprzednich filtrów, co oznacza umiarkowany poziom wygładzenia.
+
+**Wykres widma:**
+
+-   Widmo jest gładkie, ale widać większą równomierność w stosunku do Daniell(3), z mniejszym zatraceniem szczegółów niż w Daniell(6).
+
+**Wnioski**
+
+-   **Szereg ma wyraźną dominację niskich częstotliwości, czyli długookresowych trendów.** Może to wskazywać na dane, które zmieniają się powoli w czasie.
+
+<!-- -->
+
+-   **Brak istotnych okresowości w wyższych częstotliwościach** sugeruje, że dane mogą nie mieć cyklicznego charakteru (np. sezonowości lub oscylacji).
+
+-   **Pik w** f=0f = 0f=0 może wskazywać na obecność stałej składowej w danych (średnia wartość różna od zera).
+
+## **Odfiltrowanie dominujacego sygnalu i ponowne wyznaczenie periodogramu**
+
+```{r}
+#ODFILTROWANIE DOMINUJACEGO SYGNALU I PONOWNE WYZNACZENIE PERIODOGRAMU:
+par(mfrow=c(2,2))
+k=kernel("modified.daniell",6)
+plot(k)
+dane2_filter<-kernapply(dane2,k)
+#Po odfiltrowaniu:
+plot.ts(dane2_filter)
+#Periodogram po odfiltrowaniu:
+spec.pgram(dane2_filter,kernel('daniell',3),log='no',taper=0,fast=F)
+```
+
+Także bliski 0 istotny pik.
+
+## **Periodogram Welcha**
+
+```{r}
+#library(oce)
+require(oce)
+#PERIODOGRAM WELCHA
+danets<-ts(dane,frequency=12)
+danets<-danets-mean(danets)
+#wykres oeriodogramu welcha wraz z periodogramem naiwnym
+P4<-pwelch(dane2,noverlap=10,plot=FALSE)
+plot(P4$freq,P4$spec,type="l")
+abline(v=1.2,lty='dotted',col="grey")
+```
+
+Brak istotnych częstotliwości oprócz piku bliskiego 0.
+
+```{r}
+spec.pgram(dane2,log='no',taper=0,fast=T)
+lines(P4$freq,P4$spec,type="l", col="red")
+abline(v=1,lty='dotted',col="grey")
+abline(v=1.2,lty='dotted',col="grey")
+```
+
+Brak istotnych częstotliwości
+
+## **Periodogram MTM**
+
+```{r}
+
+require(multitaper)
+dane5 <- read_excel("MSPUS.xlsx", sheet = "Quarterly")
+
+uu <- as.ts(dane5[, 1])  #  dane są w formie szeregu czasowego
+uu <- uu - mean(uu)      # Usunięcie średniej
+
+P6 <- abs(fft(uu))^2 / (2 * pi * length(uu))  # Widmo mocy
+freq <- seq(from = 0, to = 1, length = length(P6))  # Dopasowanie długości freq
+
+
+L <- qchisq(0.2, 2)
+U <- qchisq(0.8, 2)
+D <- 2 * P6 / L
+G <- 2 * P6 / U
+
+
+plot(freq, log(P6), type = "l", ylim = c(0, 13), main = "Periodogram MTM")
+lines(freq, log(G), type = "l", col = "blue")  # Górny przedział ufności
+lines(freq, log(D), type = "l", col = "red")   # Dolny przedział ufności
+
+```
+
+```{r}
+#linie istotnosci dla statystyki F
+Spec2<-spec.mtm(dane5,Ftest=TRUE)
+```
+
+```{r}
+plot(Spec2,Ftest=TRUE,siglines=c(0.90,0.99))
+```
+
+Na poziomie istotności alfa=0.1 dominują częstotliwości: bardzo bliskiej 0, czyli cykl roczny i 0.4 - cykl co 2,5 kwartała (1/0.4).
+
+```{r}
+#Przedzial ufnosci
+Spec2<-spec.mtm(dane5,Ftest=TRUE,jackknife=TRUE)
+```
